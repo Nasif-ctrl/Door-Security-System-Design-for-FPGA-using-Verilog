@@ -1,0 +1,142 @@
+module Doors2 (mode, clk, i, reset, RED, GRN);
+
+    // -------------------
+    //  State Definitions
+    // -------------------
+    parameter s0 = 3'b000,
+              s1 = 3'b001,
+              s2 = 3'b010,
+              s3 = 3'b011,
+              s4 = 3'b100,
+              s5 = 3'b101,
+              s6 = 3'b110;
+
+    input clk, mode, reset;
+    input [3:0] i;                 // 4-bit input digit
+    output reg RED, GRN;
+
+    // FSM signals
+    //reg [2:0] PS, NS;
+    (* preserve *) reg [2:0] PS;
+	 (* preserve *) reg [2:0] NS;
+	 reg sel0, sel1;                // MUX select lines
+    reg E;                         // Register write enable
+
+    // Register outputs (current password)
+    wire [3:0] T, U, V, W;
+
+    // MUX output → comparator input
+    wire [3:0] m;
+
+    // Comparator result
+    wire match;
+
+    // -------------------
+    //   Submodules
+    // -------------------
+
+    comparator C1 (.i(i), .m(m), .match(match));
+
+    multiplexer MUX1 (.T(T), .U(U), .V(V), .W(W),
+                      .sel1(sel1), .sel0(sel0),
+                      .m(m));
+
+    // Registers for password digits
+    register R1 (.A(i), .clk(clk), .reset(reset), .E(E), .B(T));
+    register R2 (.A(i), .clk(clk), .reset(reset), .E(E), .B(U));
+    register R3 (.A(i), .clk(clk), .reset(reset), .E(E), .B(V));
+    register R4 (.A(i), .clk(clk), .reset(reset), .E(E), .B(W));
+
+    // -------------------
+    //   Next State Logic
+    // -------------------
+    always @(*) begin
+        case (PS)
+            s0: NS = match ? s1 : s6;
+            s1: NS = match ? s2 : s6;
+            s2: NS = match ? s3 : s6;
+            s3: begin
+                    if (!match) NS = s6;
+                    else if (!mode) NS = s4;   // unlock
+                    else NS = s5;              // change password
+                end
+            s4: NS = s0;
+            s5: NS = s0;
+            s6: NS = s0;
+        endcase
+    end
+
+    // -------------------
+    //   State Register
+    // -------------------
+    always @(posedge clk or negedge reset)
+        if (!reset) PS <= s0;
+        else        PS <= NS;
+
+    // -------------------
+    //   Output Logic
+    // -------------------
+    always @(*) begin
+        RED = 0;
+        GRN = 0;
+        E   = 0;
+        sel0 = 0;
+        sel1 = 0;
+
+
+        case (PS)
+
+            s0: begin sel0=0; sel1=0; end     // compare T
+            s1: begin sel0=1; sel1=0; end     // compare U
+            s2: begin sel0=0; sel1=1; end     // compare V
+            s3: begin sel0=1; sel1=1; end     // compare W
+
+            s4: GRN=1;                        // unlocked
+            s5: begin GRN=1; E=1; end         // write new password
+            s6: RED=1;                        // wrong password
+
+        endcase
+    end
+
+endmodule
+
+
+// ====================
+//  Comparator
+// ====================
+module comparator(input [3:0] i,
+                  input [3:0] m,
+                  output reg match);
+
+    always @(*) begin
+        if (i == m) match = 1;
+        else        match = 0;
+    end
+endmodule
+
+
+// ====================
+//  MUX
+// ====================
+module multiplexer(input [3:0] T, U, V, W,
+                   input sel1, sel0,
+                   output [3:0] m);
+
+    assign m = (sel1 ? (sel0 ? W : V)
+                     : (sel0 ? U : T));
+endmodule
+
+
+// ====================
+//  Register (4-bit)
+// ====================
+module register(input [3:0] A,
+                input clk, reset, E,
+                output reg [3:0] B);
+
+    always @(posedge clk or negedge reset) begin
+        if (!reset)  B <= 4'b0110;     // default digit
+        else if (E)  B <= A;           // write new digit
+    end
+endmodule
+
